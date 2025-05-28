@@ -4,7 +4,7 @@ const User = require("../models/User")
 const { validationResult } = require("express-validator")
 const { apiResponse } = require("../utils/helpers")
 
-// Generate JWT token
+// TODO: Move this to config file later
 const generateToken = (userId) => {
   return jwt.sign({ userId }, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRES_IN || "7d",
@@ -13,10 +13,9 @@ const generateToken = (userId) => {
   })
 }
 
-// Register new user
+// User registration endpoint
 exports.register = async (req, res) => {
   try {
-    // Check for validation errors
     const errors = validationResult(req)
     if (!errors.isEmpty()) {
       return res.status(400).json(apiResponse(false, "Validation failed", null, errors.array()))
@@ -24,32 +23,36 @@ exports.register = async (req, res) => {
 
     const { name, email, password, role } = req.body
 
-    // Check if user already exists
-    const existingUser = await User.findOne({ email })
-    if (existingUser) {
-      return res.status(409).json(apiResponse(false, "User with this email already exists"))
+    // Check if user exists - this could be optimized with indexes
+    const userExists = await User.findOne({ email })
+    if (userExists) {
+      return res.status(409).json(apiResponse(false, "Email already taken"))
     }
 
-    // Create new user
-    const userData = {
+    // Create user object
+    const newUserData = {
       name: name.trim(),
       email: email.toLowerCase().trim(),
       password,
-      role: role || "user",
     }
 
-    const user = new User(userData)
+    // Only admins can create admin accounts
+    if (role && role === "admin") {
+      newUserData.role = "admin"
+    }
+
+    const user = new User(newUserData)
     await user.save()
 
-    // Generate token
-    const token = generateToken(user._id)
+    // Generate auth token
+    const authToken = generateToken(user._id)
 
-    // Update last login
+    // Update login timestamp
     user.lastLogin = new Date()
     await user.save()
 
     res.status(201).json(
-      apiResponse(true, "User registered successfully", {
+      apiResponse(true, "Account created successfully", {
         user: {
           id: user._id,
           name: user.name,
@@ -57,17 +60,18 @@ exports.register = async (req, res) => {
           role: user.role,
           createdAt: user.createdAt,
         },
-        token,
+        token: authToken,
       }),
     )
   } catch (error) {
     console.error("Registration error:", error)
 
-    // Handle specific mongoose errors
+    // Handle duplicate key error
     if (error.code === 11000) {
       return res.status(409).json(apiResponse(false, "Email already exists"))
     }
 
+    // Handle validation errors
     if (error.name === "ValidationError") {
       const validationErrors = Object.values(error.errors).map((err) => ({
         field: err.path,
@@ -76,62 +80,55 @@ exports.register = async (req, res) => {
       return res.status(400).json(apiResponse(false, "Validation failed", null, validationErrors))
     }
 
-    res.status(500).json(apiResponse(false, "Internal server error during registration"))
+    res.status(500).json(apiResponse(false, "Registration failed"))
   }
 }
 
-// Login user
+// Login functionality
 exports.login = async (req, res) => {
   try {
-    // Check for validation errors
     const errors = validationResult(req)
     if (!errors.isEmpty()) {
-      return res.status(400).json(apiResponse(false, "Validation failed", null, errors.array()))
+      return res.status(400).json(apiResponse(false, "Invalid input", null, errors.array()))
     }
 
     const { email, password } = req.body
 
-    // Find user and include password for comparison
+    // Find user with password field included
     const user = await User.findOne({
       email: email.toLowerCase().trim(),
       isActive: true,
     }).select("+password +loginAttempts +lockUntil")
 
     if (!user) {
-      return res.status(401).json(apiResponse(false, "Invalid email or password"))
+      return res.status(401).json(apiResponse(false, "Invalid credentials"))
     }
 
-    // Check if account is locked
+    // Check account lock status
     if (user.isLocked) {
       return res
         .status(423)
-        .json(
-          apiResponse(
-            false,
-            "Account is temporarily locked due to too many failed login attempts. Please try again later.",
-          ),
-        )
+        .json(apiResponse(false, "Account locked due to multiple failed attempts. Try again later."))
     }
 
-    // Check password
-    const isPasswordValid = await user.comparePassword(password)
-    if (!isPasswordValid) {
-      // Increment login attempts
+    // Verify password
+    const passwordMatch = await user.comparePassword(password)
+    if (!passwordMatch) {
+      // Increment failed attempts
       await user.incLoginAttempts()
-
-      return res.status(401).json(apiResponse(false, "Invalid email or password"))
+      return res.status(401).json(apiResponse(false, "Invalid credentials"))
     }
 
-    // Reset login attempts on successful login
+    // Reset failed attempts on successful login
     if (user.loginAttempts > 0) {
       await user.resetLoginAttempts()
     }
 
-    // Update last login
+    // Update last login time
     user.lastLogin = new Date()
     await user.save()
 
-    // Generate token
+    // Create JWT token
     const token = generateToken(user._id)
 
     res.status(200).json(
@@ -148,11 +145,11 @@ exports.login = async (req, res) => {
     )
   } catch (error) {
     console.error("Login error:", error)
-    res.status(500).json(apiResponse(false, "Internal server error during login"))
+    res.status(500).json(apiResponse(false, "Login failed"))
   }
 }
 
-// Get current user profile
+// Get user profile info
 exports.getProfile = async (req, res) => {
   try {
     const user = await User.findById(req.user.userId)
@@ -161,7 +158,7 @@ exports.getProfile = async (req, res) => {
     }
 
     res.status(200).json(
-      apiResponse(true, "Profile retrieved successfully", {
+      apiResponse(true, "Profile data retrieved", {
         user: {
           id: user._id,
           name: user.name,
@@ -174,8 +171,8 @@ exports.getProfile = async (req, res) => {
       }),
     )
   } catch (error) {
-    console.error("Get profile error:", error)
-    res.status(500).json(apiResponse(false, "Internal server error"))
+    console.error("Profile fetch error:", error)
+    res.status(500).json(apiResponse(false, "Could not fetch profile"))
   }
 }
 
@@ -189,7 +186,7 @@ exports.updateProfile = async (req, res) => {
 
     const { name } = req.body
 
-    const user = await User.findByIdAndUpdate(
+    const updatedUser = await User.findByIdAndUpdate(
       req.user.userId,
       {
         name: name.trim(),
@@ -201,13 +198,13 @@ exports.updateProfile = async (req, res) => {
       },
     )
 
-    if (!user) {
+    if (!updatedUser) {
       return res.status(404).json(apiResponse(false, "User not found"))
     }
 
-    res.status(200).json(apiResponse(true, "Profile updated successfully", { user }))
+    res.status(200).json(apiResponse(true, "Profile updated", { user: updatedUser }))
   } catch (error) {
-    console.error("Update profile error:", error)
+    console.error("Profile update error:", error)
 
     if (error.name === "ValidationError") {
       const validationErrors = Object.values(error.errors).map((err) => ({
@@ -217,11 +214,11 @@ exports.updateProfile = async (req, res) => {
       return res.status(400).json(apiResponse(false, "Validation failed", null, validationErrors))
     }
 
-    res.status(500).json(apiResponse(false, "Internal server error"))
+    res.status(500).json(apiResponse(false, "Update failed"))
   }
 }
 
-// Change password
+// Change password functionality
 exports.changePassword = async (req, res) => {
   try {
     const errors = validationResult(req)
@@ -231,38 +228,38 @@ exports.changePassword = async (req, res) => {
 
     const { currentPassword, newPassword } = req.body
 
-    // Find user with password
+    // Get user with password
     const user = await User.findById(req.user.userId).select("+password")
     if (!user) {
       return res.status(404).json(apiResponse(false, "User not found"))
     }
 
-    // Verify current password
-    const isCurrentPasswordValid = await user.comparePassword(currentPassword)
-    if (!isCurrentPasswordValid) {
+    // Check current password
+    const isCurrentPasswordCorrect = await user.comparePassword(currentPassword)
+    if (!isCurrentPasswordCorrect) {
       return res.status(400).json(apiResponse(false, "Current password is incorrect"))
     }
 
-    // Update password
+    // Set new password
     user.password = newPassword
     await user.save()
 
-    res.status(200).json(apiResponse(true, "Password changed successfully"))
+    res.status(200).json(apiResponse(true, "Password updated successfully"))
   } catch (error) {
-    console.error("Change password error:", error)
-    res.status(500).json(apiResponse(false, "Internal server error"))
+    console.error("Password change error:", error)
+    res.status(500).json(apiResponse(false, "Password change failed"))
   }
 }
 
-// Logout user (client-side token removal, but we can log it)
+// Logout - mainly for logging purposes
 exports.logout = async (req, res) => {
   try {
-    // In a more sophisticated setup, you might want to blacklist the token
-    // For now, we'll just send a success response
+    // In a real app, we might blacklist the token here
+    // For now just return success
     res.status(200).json(apiResponse(true, "Logged out successfully"))
   } catch (error) {
     console.error("Logout error:", error)
-    res.status(500).json(apiResponse(false, "Internal server error"))
+    res.status(500).json(apiResponse(false, "Logout failed"))
   }
 }
 

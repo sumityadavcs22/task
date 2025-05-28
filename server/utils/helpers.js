@@ -3,12 +3,11 @@ const mongoose = require("mongoose")
 
 /**
  * Standard API response format
- * @param {boolean} success - Whether the operation was successful
+ * @param {boolean} success - Operation success status
  * @param {string} message - Response message
- * @param {any} data - Response data
- * @param {array} errors - Array of error objects
- * @param {object} meta - Additional metadata (pagination, etc.)
- * @returns {object} Formatted response object
+ * @param {any} data - Response data (optional)
+ * @param {array} errors - Error array (optional)
+ * @param {object} meta - Metadata like pagination (optional)
  */
 exports.apiResponse = (success, message, data = null, errors = null, meta = null) => {
   const response = {
@@ -33,16 +32,12 @@ exports.apiResponse = (success, message, data = null, errors = null, meta = null
 }
 
 /**
- * Pagination helper
- * @param {number} page - Current page number
- * @param {number} limit - Items per page
- * @param {number} total - Total number of items
- * @returns {object} Pagination metadata
+ * Pagination metadata helper
  */
 exports.getPaginationMeta = (page, limit, total) => {
   const totalPages = Math.ceil(total / limit)
-  const hasNextPage = page < totalPages
-  const hasPrevPage = page > 1
+  const hasNext = page < totalPages
+  const hasPrev = page > 1
 
   return {
     pagination: {
@@ -50,28 +45,23 @@ exports.getPaginationMeta = (page, limit, total) => {
       totalPages,
       totalItems: total,
       itemsPerPage: limit,
-      hasNextPage,
-      hasPrevPage,
-      nextPage: hasNextPage ? page + 1 : null,
-      prevPage: hasPrevPage ? page - 1 : null,
+      hasNextPage: hasNext,
+      hasPrevPage: hasPrev,
+      nextPage: hasNext ? page + 1 : null,
+      prevPage: hasPrev ? page - 1 : null,
     },
   }
 }
 
 /**
- * Validate MongoDB ObjectId
- * @param {string} id - ID to validate
- * @returns {boolean} Whether the ID is valid
+ * Check if string is valid MongoDB ObjectId
  */
 exports.isValidObjectId = (id) => {
   return mongoose.Types.ObjectId.isValid(id)
 }
 
 /**
- * Generate random string
- * @param {number} length - Length of the string
- * @param {string} charset - Character set to use
- * @returns {string} Random string
+ * Generate random string - useful for references
  */
 exports.generateRandomString = (length = 8, charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") => {
   let result = ""
@@ -82,20 +72,16 @@ exports.generateRandomString = (length = 8, charset = "ABCDEFGHIJKLMNOPQRSTUVWXY
 }
 
 /**
- * Generate booking reference
- * @returns {string} Unique booking reference
+ * Generate unique booking reference
  */
 exports.generateBookingReference = () => {
   const timestamp = Date.now().toString().slice(-6)
-  const random = exports.generateRandomString(4)
-  return `BK${timestamp}${random}`
+  const randomPart = exports.generateRandomString(4)
+  return `BK${timestamp}${randomPart}`
 }
 
 /**
- * Calculate date difference in days
- * @param {Date} date1 - First date
- * @param {Date} date2 - Second date
- * @returns {number} Difference in days
+ * Calculate days between two dates
  */
 exports.daysDifference = (date1, date2) => {
   const diffTime = Math.abs(date2 - date1)
@@ -103,10 +89,7 @@ exports.daysDifference = (date1, date2) => {
 }
 
 /**
- * Format currency
- * @param {number} amount - Amount to format
- * @param {string} currency - Currency code
- * @returns {string} Formatted currency string
+ * Format currency amount
  */
 exports.formatCurrency = (amount, currency = "USD") => {
   return new Intl.NumberFormat("en-US", {
@@ -116,9 +99,7 @@ exports.formatCurrency = (amount, currency = "USD") => {
 }
 
 /**
- * Sanitize user input
- * @param {string} input - Input to sanitize
- * @returns {string} Sanitized input
+ * Basic input sanitization
  */
 exports.sanitizeInput = (input) => {
   if (typeof input !== "string") return input
@@ -126,9 +107,7 @@ exports.sanitizeInput = (input) => {
 }
 
 /**
- * Generate slug from string
- * @param {string} text - Text to convert to slug
- * @returns {string} URL-friendly slug
+ * Create URL-friendly slug from text
  */
 exports.generateSlug = (text) => {
   return text
@@ -140,18 +119,14 @@ exports.generateSlug = (text) => {
 }
 
 /**
- * Check if date is in the future
- * @param {Date} date - Date to check
- * @returns {boolean} Whether the date is in the future
+ * Check if date is in future
  */
 exports.isFutureDate = (date) => {
   return new Date(date) > new Date()
 }
 
 /**
- * Get time until date
- * @param {Date} date - Target date
- * @returns {object} Time until date in various units
+ * Get time remaining until target date
  */
 exports.getTimeUntil = (date) => {
   const now = new Date()
@@ -177,9 +152,7 @@ exports.getTimeUntil = (date) => {
 }
 
 /**
- * Validate email format
- * @param {string} email - Email to validate
- * @returns {boolean} Whether the email is valid
+ * Simple email validation
  */
 exports.isValidEmail = (email) => {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -187,9 +160,7 @@ exports.isValidEmail = (email) => {
 }
 
 /**
- * Validate phone number format
- * @param {string} phone - Phone number to validate
- * @returns {boolean} Whether the phone number is valid
+ * Phone number validation
  */
 exports.isValidPhone = (phone) => {
   const phoneRegex = /^[+]?[1-9][\d]{0,15}$/
@@ -197,11 +168,8 @@ exports.isValidPhone = (phone) => {
 }
 
 /**
- * Calculate refund amount based on cancellation policy
- * @param {number} totalAmount - Original booking amount
- * @param {Date} eventDate - Event date
- * @param {string} policy - Cancellation policy
- * @returns {number} Refund amount
+ * Calculate refund based on cancellation policy
+ * Different policies: flexible, moderate, strict, no_refund
  */
 exports.calculateRefund = (totalAmount, eventDate, policy = "moderate") => {
   const now = new Date()
@@ -228,9 +196,7 @@ exports.calculateRefund = (totalAmount, eventDate, policy = "moderate") => {
 }
 
 /**
- * Handle async errors in Express routes
- * @param {Function} fn - Async function to wrap
- * @returns {Function} Express middleware function
+ * Async error handler wrapper
  */
 exports.catchAsync = (fn) => {
   return (req, res, next) => {
@@ -239,10 +205,7 @@ exports.catchAsync = (fn) => {
 }
 
 /**
- * Filter object by allowed fields
- * @param {object} obj - Object to filter
- * @param {array} allowedFields - Array of allowed field names
- * @returns {object} Filtered object
+ * Filter object to only include allowed fields
  */
 exports.filterObj = (obj, ...allowedFields) => {
   const newObj = {}

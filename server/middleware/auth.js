@@ -3,12 +3,12 @@ const jwt = require("jsonwebtoken")
 const User = require("../models/User")
 const { apiResponse } = require("../utils/helpers")
 
-// Protect routes - require authentication
+// Main authentication middleware
 exports.protect = async (req, res, next) => {
   try {
     let token
 
-    // Check if token exists in headers
+    // Extract token from Authorization header
     if (req.headers.authorization && req.headers.authorization.startsWith("Bearer")) {
       token = req.headers.authorization.split(" ")[1]
     }
@@ -18,31 +18,31 @@ exports.protect = async (req, res, next) => {
     }
 
     try {
-      // Verify token
+      // Verify the JWT token
       const decoded = jwt.verify(token, process.env.JWT_SECRET)
 
       // Check if user still exists
-      const user = await User.findById(decoded.userId).select("+passwordChangedAt")
-      if (!user) {
+      const currentUser = await User.findById(decoded.userId).select("+passwordChangedAt")
+      if (!currentUser) {
         return res.status(401).json(apiResponse(false, "The user belonging to this token no longer exists."))
       }
 
-      // Check if user is active
-      if (!user.isActive) {
+      // Check if user account is active
+      if (!currentUser.isActive) {
         return res.status(401).json(apiResponse(false, "Your account has been deactivated."))
       }
 
-      // Check if user changed password after the token was issued
-      if (user.changedPasswordAfter(decoded.iat)) {
+      // Check if user changed password after token was issued
+      if (currentUser.changedPasswordAfter(decoded.iat)) {
         return res.status(401).json(apiResponse(false, "User recently changed password. Please log in again."))
       }
 
-      // Grant access to protected route
+      // Add user info to request object
       req.user = {
-        userId: user._id,
-        email: user.email,
-        role: user.role,
-        name: user.name,
+        userId: currentUser._id,
+        email: currentUser.email,
+        role: currentUser.role,
+        name: currentUser.name,
       }
 
       next()
@@ -61,7 +61,7 @@ exports.protect = async (req, res, next) => {
   }
 }
 
-// Optional authentication - doesn't fail if no token
+// Optional authentication - doesn't fail if no token provided
 exports.optionalAuth = async (req, res, next) => {
   try {
     let token
@@ -71,7 +71,7 @@ exports.optionalAuth = async (req, res, next) => {
     }
 
     if (!token) {
-      return next()
+      return next() // Continue without authentication
     }
 
     try {
@@ -87,18 +87,18 @@ exports.optionalAuth = async (req, res, next) => {
         }
       }
     } catch (jwtError) {
-      // Silently fail for optional auth
+      // Silently fail for optional auth - just log it
       console.log("Optional auth failed:", jwtError.message)
     }
 
     next()
   } catch (error) {
     console.error("Optional auth middleware error:", error)
-    next()
+    next() // Continue even if there's an error
   }
 }
 
-// Restrict to specific roles
+// Role-based access control
 exports.restrictTo = (...roles) => {
   return (req, res, next) => {
     if (!req.user) {
@@ -113,14 +113,14 @@ exports.restrictTo = (...roles) => {
   }
 }
 
-// Check if user owns the resource or is admin
+// Check resource ownership or admin access
 exports.checkOwnership = (resourceUserField = "user") => {
   return (req, res, next) => {
     if (!req.user) {
       return res.status(401).json(apiResponse(false, "Authentication required"))
     }
 
-    // Admin can access any resource
+    // Admins can access any resource
     if (req.user.role === "admin") {
       return next()
     }
